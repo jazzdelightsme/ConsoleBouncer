@@ -5,7 +5,67 @@ processes do not linger (and mess up the console) when canceled.
 
 ## How to Install
 
-TBD
+There are two editions of PowerShell: legacy Windows PowerShell (5.1, `powershell.exe`),
+and modern (current) PowerShell (v7+, `pwsh.exe`), and you should install in such a way
+that ConsoleBouncer will be loaded into both.
+
+**IMPORTANT**: if you do not follow these steps carefully and exactly, you can end up in a
+situation where the ConsoleBouncer module is *not* loaded or available in one version of
+PowerShell or the other. That would be bad, because if you have a process tree with both
+`powershell.exe` and `pwsh.exe` in it, and the ConsoleBouncer is not loaded in one of your
+shells, a ctrl+c can unexpectedly kill the other one, which you probably would not
+appreciate. So take care with the following instructions:
+
+1. Start an **elevated** *legacy* Windows 5.1 `powershell.exe` process.
+2. `Install-Module ConsoleBouncer -Scope AllUsers`
+3. Update **BOTH** your `$profile` scripts (for both versions of PS) to include the line “`Import-Module ConsoleBouncer`”. (Helper script that you can copy/paste is below.)
+
+Step 1 uses **legacy** Windows PowerShell, because when you run `Install-Module -Scope
+AllUsers` from there, the module gets installed into a location in Program Files that is
+"visible" in the `$env:PSModulePath` for both legacy and modern PowerShell. This is better
+than installing twice, one copy each for legacy and modern, not just to avoid having two
+copies, but also to avoid version mismatch between them.
+
+Here is code to automatically perform those steps; just open an **elevated** *legacy*
+Windows 5.1 `powershell.exe` window and paste it in:
+
+```powershell
+try
+{
+    if( $PSVersionTable.PSVersion.Major -ne 5 )
+    {
+        throw "Please run this in **legacy** Windows PowerShell (powershell.exe)."
+    }
+
+    [bool] $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+    if( !$isAdmin )
+    {
+        throw "Please run this in an *elevated* Windows PowerShell window."
+    }
+
+    Install-Module ConsoleBouncer -Scope AllUsers -ErrorAction Stop # follow the prompts
+
+    $legacyProfile = '~\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'
+    $modernProfile = '~\Documents\PowerShell\Microsoft.PowerShell_profile.ps1'
+
+    foreach( $p in @( $legacyProfile, $modernProfile ) )
+    {
+        if( !(Test-Path $p) )
+        {
+            mkdir -Force (Split-Path $p) | Out-Null
+        }
+        if( !((Get-Content -Raw $legacyProfile) -like "*Import-Module ConsoleBouncer*") )
+        {
+            Add-Content -Path $p -Value "`r`n`r`nImport-Module ConsoleBouncer`r`n"
+        }
+    }
+}
+catch
+{
+    Write-Error $_
+}
+```
 
 ## Details
 
