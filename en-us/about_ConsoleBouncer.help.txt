@@ -11,11 +11,13 @@ LONG DESCRIPTION
     Ctrl+c cancellation does not work really well on Windows. Each process attached to a
     console receives a ctrl+c signal (as opposed to just the active shell), and sometimes,
     when a shell has launched some large tree of child processes (imagine a build system,
-    for example), some processes do not exit, leaving multiple processes all concurrently
-    trying to consume console input, which Does Not Work Well(TM). It's usually not too
-    bad when cmd.exe is your shell, because you can just keep mashing on ctrl+c and
-    usually get back to a usable state. But it's considerably worse in PowerShell, due to
-    how PSReadLine works, and can be completely unrecoverable.
+    for example), some processes do not exit (perhaps due to races between process
+    creation and console attachment), leaving multiple processes all concurrently trying
+    to consume console input, which Does Not Work Well(TM). It's usually not too bad when
+    cmd.exe is your shell, because you can just keep mashing on ctrl+c and usually get
+    back to a usable state. But it's considerably worse in PowerShell, because PSReadLine
+    temporarily disables ctrl+c signals when waiting at the prompt, and can be completely
+    unrecoverable.
 
     The ConsoleBouncer module implements a ctrl+c handler for PowerShell shell processes
     to mitigate this problem (it works in both legacy powershell.exe and pwsh.exe).
