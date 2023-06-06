@@ -17,6 +17,9 @@ namespace ConsoleBouncer
     public static class NativeMethods
     {
         [DllImport( "kernel32.dll" )]
+        public static extern ulong GetTickCount64();
+
+        [DllImport( "kernel32.dll" )]
         public static extern uint GetCurrentThreadId();
 
         [DllImport( "kernel32.dll" )]
@@ -424,6 +427,7 @@ namespace ConsoleBouncer
             private const string DisabledName = "Disabled";
             private const string DisarmedName = "DisarmedBy";
             private const string ClearProgressName = "ClearProgress";
+            private const string MaxRoundsName = "MaxRounds";
 
             // Synchronizes access to data stored in console aliases.
             private Mutex m_consoleMutex;
@@ -542,6 +546,12 @@ namespace ConsoleBouncer
 
             // How long to wait before terminating processes that are not in the
             // m_allowedPids list.
+            //
+            // You don't want this to be very long... processes that end up as lingering
+            // processes probably got attached to the console after the original ctrl+c,
+            // so they are probably NOT endeavoring to exit; they are probably just
+            // proceeding as normal, without a care in the world; so in those cases, we
+            // will likely always end up waiting for the entire grace period.
             public int GracePeriodMillis
             {
                 get
@@ -742,6 +752,42 @@ namespace ConsoleBouncer
                 }
             }
 
+            // The maximum number of passes the bouncer should take when clearing out
+            // non-allowed processes.
+            //
+            // The theory for why more than one round might be needed is that the same
+            // race between process creation and console attachment that could cause
+            // lingering processes in the first place could cause us to need a second
+            // round of cleanup... but I've never actually seen more than one round be
+            // needed. Probably because the process that is spawing processes got taken
+            // out with the original ctrl+c signal. So we'll stick to a default of just
+            // one round for now, with the possibility to expand to more, if needed.
+            public int MaxRounds
+            {
+                get
+                {
+                    string strVal = _ReadSharedValue( MaxRoundsName );
+
+                    if( String.IsNullOrEmpty( strVal ) )
+                    {
+                        return 1;
+                    }
+
+                    int val = 0;
+                    if( !Int32.TryParse( strVal, out val ) )
+                    {
+                        return 1;
+                    }
+
+                    return val > 0 ? val : 1;
+                }
+
+                set
+                {
+                    _WriteSharedValue( MaxRoundsName, value.ToString() );
+                }
+            }
+
             // Just a handy IDisposable wrapper for a mutex.
             private class LockedMutex : IDisposable
             {
@@ -848,21 +894,20 @@ namespace ConsoleBouncer
                 return false;
             }
 
-            // The "business end" of the bouncer...
-            private void _BootProcessesThatAreNotOnTheAllowList( string[] allowedProcNames )
+            // Calculates what processes need to be killed (populated into procsToBoot),
+            // and returns the count.
+            private int _GatherProcessesToBoot( HashSet< string > allowedProcNamesSet,
+                                                List< Process > procsToBoot )
             {
+                procsToBoot.Clear();
+
                 // These are the processes currently attached to this console:
                 uint[] curPids = NativeMethods.GetConsoleProcessList();
-                var procsToBoot = new List< Process >( curPids.Length );
-
-                var allowedProcNamesSet = new HashSet<string>( allowedProcNames,
-                                                               StringComparer.OrdinalIgnoreCase );
 
                 foreach( var pid in curPids )
                 {
                     if( !_IsPidAllowedToStay( pid, allowedProcNamesSet ) )
                     {
-                        Say( 2, "You can leave on your own or I'll help you, {0}", pid );
                         Process proc = null;
                         try
                         {
@@ -876,57 +921,87 @@ namespace ConsoleBouncer
 
                         if( proc != null )
                         {
+                            Say( 2, "You can leave on your own or I'll help you, {0}", pid );
                             procsToBoot.Add( proc );
                         }
                     }
                 }
+                return procsToBoot.Count;
+            }
 
-                if( procsToBoot.Count > 0 )
+            private int _MillisLeftUntilDeadline( ulong deadline )
+            {
+                ulong diff = deadline - GetTickCount64();
+
+                return (int) (diff > 0 ? diff : 0);
+            }
+
+            // The "business end" of the bouncer...
+            private void _BootProcessesThatAreNotOnTheAllowList( string[] allowedProcNames )
+            {
+                var procsToBoot = new List< Process >();
+
+                var allowedProcNamesSet = new HashSet<string>( allowedProcNames,
+                                                               StringComparer.OrdinalIgnoreCase );
+
+                // If it takes more than a few rounds of cleanup, we are in some kind of
+                // pathological situation, and we'll bow out.
+                int round = 0;
+
+                while( (round++ < MaxRounds) &&
+                       (_GatherProcessesToBoot( allowedProcNamesSet, procsToBoot ) > 0) )
                 {
-                    Thread.Sleep( GracePeriodMillis ); // grace period, in case they can exit "cleanly" on their own
+                    // We'll give them up to GracePeriodMillis for them to exit on their
+                    // own, in case they actually did receive the original ctrl+c, and are
+                    // just a tad slow shutting down.
+                    ulong deadline = GetTickCount64() + (ulong) GracePeriodMillis;
 
-                    foreach( var proc in procsToBoot )
+                    var notDeadYet = procsToBoot.Where(
+                            (p) => !p.WaitForExit( _MillisLeftUntilDeadline( deadline ) ) );
+
+                    foreach( var proc in notDeadYet )
                     {
                         try
                         {
                             // "Kill, kill, kill!" - Miss Hannigan
                             proc.Kill();
                         }
-                        // ignore problems; maybe it's gone already, maybe something else; whatever
+                        // Ignore problems; maybe it's gone already, maybe something else;
+                        // whatever.
                         catch( InvalidOperationException ) { }
                         catch( Win32Exception ) { }
-
-                        proc.Dispose();
                     }
 
-                    if( ClearProgress )
+                    foreach( var proc in procsToBoot )
                     {
-                        uint consoleMode = GetConsoleMode();
-                        if( ItLooksLikeWeAreInTerminal() )
+                        proc.Dispose();
+                    }
+                } // end retry loop
+
+                if( ClearProgress )
+                {
+                    uint consoleMode = GetConsoleMode();
+                    if( ItLooksLikeWeAreInTerminal() )
+                    {
+                        // We can use the [semi-]standard OSC sequence:
+                        // https://conemu.github.io/en/AnsiEscapeCodes.html#ConEmu_specific_OSC
+                        if( 0 != (consoleMode & (uint) ConsoleModeOutputFlags.ENABLE_VIRTUAL_TERMINAL_PROCESSING) )
                         {
-                            // We can use the [semi-]standard OSC sequence:
-                            // https://conemu.github.io/en/AnsiEscapeCodes.html#ConEmu_specific_OSC
-                            if( 0 != (consoleMode & (uint) ConsoleModeOutputFlags.ENABLE_VIRTUAL_TERMINAL_PROCESSING) )
-                            {
-                                Console.Write( "\x001b]9;4;0;0\a" );
-                                Say( 3, "cleared progress via VT OSC sequence..." );
-                            }
+                            Console.Write( "\x001b]9;4;0;0\a" );
+                            Say( 3, "cleared progress via VT OSC sequence..." );
                         }
-                        else
+                    }
+                    else
+                    {
+                        IntPtr hwnd = GetConsoleWindow();
+                        if( hwnd != IntPtr.Zero )
                         {
-                            IntPtr hwnd = GetConsoleWindow();
-                            if( hwnd != IntPtr.Zero )
-                            {
-                                int ret = TaskbarProgress.SetProgressState( hwnd, TaskbarStates.NoProgress );
-                                Say( 3, "cleared progress via taskbar COM interface (returned: {0})", ret );
-                            }
+                            int ret = TaskbarProgress.SetProgressState( hwnd, TaskbarStates.NoProgress );
+                            Say( 3, "cleared progress via taskbar COM interface (returned: {0})", ret );
                         }
                     }
                 }
-
-                // TODO: should we loop? (what if one of the disallowed processes spawned
-                // a new child before we got around to killing it?)
-            }
+            } // end _BootProcessesThatAreNotOnTheAllowList()
 
             // This is what gets called when ctrl+c is pressed.
             private bool _Handler( ConsoleBreakSignal ctrlType )

@@ -248,6 +248,13 @@ function Get-ConsoleBouncerOption
 # Private function for debugging.
 #
 # Use it like this: "& (gmo ConsoleBouncer) { DumpAliases }"
+#
+# Also, for lack of a better place to write it down, a handy cmd.exe command line that
+# does not exit on its own after the first ctrl+c (it would require two ctrl+cs if the
+# bouncer is disabled):
+#
+#     cmd --% /c set /p hi=& set /p bye=
+#
 function DumpAliases
 {
     [CmdletBinding()]
