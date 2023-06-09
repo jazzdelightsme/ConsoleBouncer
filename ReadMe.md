@@ -54,8 +54,9 @@ try
         if( !(Test-Path $p) )
         {
             mkdir -Force (Split-Path $p) | Out-Null
+            Set-Content -Path $p -Value ''
         }
-        if( !((Get-Content -Raw $legacyProfile) -like "*Import-Module ConsoleBouncer*") )
+        if( !((Get-Content -Raw $p) -like "*Import-Module ConsoleBouncer*") )
         {
             Add-Content -Path $p -Value "`r`n`r`nImport-Module ConsoleBouncer`r`n"
         }
