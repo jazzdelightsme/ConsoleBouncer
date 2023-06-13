@@ -69,7 +69,17 @@ catch
 ```
 ## To update an existing install
 
-Similar to the install procedure, you must be running elevated, legacy (5.1) `powershell.exe`, where you can run: `Update-Module ConsoleBouncer`
+Similar to the install procedure, you must be running elevated, legacy (5.1) `powershell.exe`, where you can run:
+
+```powershell
+Update-Module ConsoleBouncer
+```
+
+Then if you want to pick up the changes in an existing `powershell`/`pwsh` window, run:
+
+```powershell
+Import-Module ConsoleBouncer -Force
+```
 
 ## Details
 
