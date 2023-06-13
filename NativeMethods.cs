@@ -931,9 +931,19 @@ namespace ConsoleBouncer
 
             private int _MillisLeftUntilDeadline( ulong deadline )
             {
-                ulong diff = deadline - GetTickCount64();
+                long diff = (long) (deadline - GetTickCount64());
 
-                return (int) (diff > 0 ? diff : 0);
+                if( diff < 0 )
+                {
+                    diff = 0;
+                }
+                else if( diff >= (long) Int32.MaxValue )
+                {
+                    // Should not ever actually happen...
+                    diff = c_DefaultGraceMillis;
+                }
+
+                return (int) diff;
             }
 
             // The "business end" of the bouncer...
