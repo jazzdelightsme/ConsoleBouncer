@@ -67,6 +67,9 @@ catch
     Write-Error $_
 }
 ```
+## To update an existing install
+
+Similar to the install procedure, you must be running elevated, legacy (5.1) `powershell.exe`, where you can run: `Update-Module ConsoleBouncer`
 
 ## Details
 
