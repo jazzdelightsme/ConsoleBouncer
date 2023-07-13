@@ -212,3 +212,9 @@ ConsoleBouncer is loaded in.
    in the wild, only a few random processes in a large tree of build processes do this,
    and simply mashing on ctrl+c is enough to eventually get a signal to ConsoleBouncer.
 
+4. **May crash your shell.** Due to [this GH
+   Issue](https://github.com/dotnet/runtime/issues/88697) (a problem in the .NET Console
+   API), if you are unlucky with timing, and PSReadLine happens to be calling e.g.
+   `KeyAvailable` at just the same time as some straggler process is getting
+   killed, it might trigger the exception described by that GH Issue, and crash
+   your shell. TBD: a PSReadLine Issue.
