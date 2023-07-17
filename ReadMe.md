@@ -215,6 +215,11 @@ ConsoleBouncer is loaded in.
 4. **May crash your shell.** Due to [this GH
    Issue](https://github.com/dotnet/runtime/issues/88697) (a problem in the .NET Console
    API), if you are unlucky with timing, and PSReadLine happens to be calling e.g.
-   `KeyAvailable` at just the same time as some straggler process is getting
-   killed, it might trigger the exception described by that GH Issue, and crash
-   your shell. TBD: a PSReadLine Issue.
+   `KeyAvailable` at just the same time as some straggler process is getting killed, it
+   might trigger the exception described by that GH Issue, and crash your shell. There are
+   two PSReadLine Issues filed for this: [this
+   one](https://github.com/PowerShell/PSReadLine/issues/3744) for a scoped fix to handle
+   the exception; and [this one](https://github.com/PowerShell/PSReadLine/issues/3745) to
+   propose a technically superior solution to the problem that ConsoleBouncer is solving,
+   implemented in PSReadLine itself.
+ 
