@@ -3,18 +3,27 @@
 The ConsoleBouncer module implements a <kbd>ctrl+c</kbd> handler to ensure child
 processes do not linger (and mess up the console) when canceled.
 
+> [!NOTE]
+> As of PSReadLine version 2.3.3+ (shipped with PowerShell 7.4), it has a built-in option,
+> `-TerminateOrphanedConsoleApps`, which renders ConsoleBouncer mostly unnecessary
+> (documented
+> [here](https://learn.microsoft.com/en-us/powershell/module/psreadline/set-psreadlineoption?view=powershell-7.4#-terminateorphanedconsoleapps)).
+> However, ConsoleBouncer *can* coexist peacefully with that PSReadLine option, and in
+> fact might be desired, due to its more aggressive nature. More details below.
+
 ## How to Install
 
 There are two editions of PowerShell: legacy Windows PowerShell (5.1, `powershell.exe`),
 and modern (current) PowerShell (v7+, `pwsh.exe`), and you should install in such a way
 that ConsoleBouncer will be loaded into both.
 
-**IMPORTANT**: if you do not follow these steps carefully and exactly, you can end up in a
-situation where the ConsoleBouncer module is *not* loaded or available in one version of
-PowerShell or the other. That would be bad, because if you have a process tree with both
-`powershell.exe` and `pwsh.exe` in it, and the ConsoleBouncer is not loaded in one of your
-shells, a ctrl+c can unexpectedly kill the other one, which you probably would not
-appreciate. So take care with the following instructions:
+> [!CAUTION]
+> If you do not follow these steps carefully and exactly, you can end up in a situation
+> where the ConsoleBouncer module is *not* loaded or available in one version of
+> PowerShell or the other. That would be bad, because if you have a process tree with both
+> `powershell.exe` and `pwsh.exe` in it, and the ConsoleBouncer is not loaded in one of
+> your shells, a ctrl+c can unexpectedly kill the other one, which you probably would not
+> appreciate. So take care with the following instructions:
 
 1. Start an **elevated** *legacy* Windows 5.1 `powershell.exe` process.
 2. `Install-Module ConsoleBouncer -Scope AllUsers`
@@ -88,21 +97,44 @@ console receives a ctrl+c signal (as opposed to just the active shell), and *som
 when a shell has launched some large tree of child processes (imagine a build system, for
 example), some processes do not exit (perhaps due to races between process creation and
 console attachment), leaving multiple processes all concurrently trying to consume console
-input, which Does Not Work Well(TM). It's usually not too bad when `cmd.exe` is your
-shell, because you can just keep mashing on ctrl+c and usually get back to a usable state.
-But it's considerably worse in PowerShell, because PSReadLine temporarily disables ctrl+c
-signals when waiting at the prompt, and can be completely unrecoverable. (TBD: link to
-PSReadLine Issue.)
+input, which Does Not Work Well<sup>(TM)</sup>. It's usually not too bad when `cmd.exe` is
+your shell, because you can just keep mashing on ctrl+c and usually get back to a usable
+state. But it's considerably worse in PowerShell, because PSReadLine temporarily disables
+ctrl+c signals when waiting at the prompt, and can be completely unrecoverable (you have
+to manually kill the PowerShell process :sob:).
 
 The ConsoleBouncer module implements a ctrl+c handler for PowerShell shell processes
 to mitigate this problem (it works in both legacy `powershell.exe` and `pwsh.exe`).
 
-The way it works is that when it is loaded, it takes a look at which PIDs are
-currently attached to the console (there could be multiple, for example, if you
-launched PowerShell from cmd.exe), and remembers those PIDs as the "allowed PIDs".
-Later, when a ctrl+c signal comes along, the ConsoleBouncer handler enumerates all
-PIDs attached to the console, and kills any which are not in the allow list (after a
-[configurable] grace period (default of 1 second)).
+> [!NOTE]
+> The PSReadLine module version 2.3.3+ (shipped with PowerShell 7.4) has a built-in
+> option, `-TerminateOrphanedConsoleApps`, which is mostly superior to ConsoleBouncer
+> (described in [this Issue](https://github.com/PowerShell/PSReadLine/issues/3745)). If
+> you have that version of PSReadLine (or better), and you turn that option on, you
+> probably don't need the ConsoleBouncer module.
+>
+> Some differences between the the two:
+>  * With `-TerminateOrphanedConsoleApps`, PSReadLine will only terminate "orphaned"
+>    processes: processes that are attached to the current console, but whose parent
+>    process is no longer running. In practice, this is probably good enough.
+>  * ConsoleBouncer relies on a ctrl+c signal, whereas `-TerminateOrphanedConsoleApps`
+>    does not (it is triggered only when the immediate child returns, and PSReadLine is
+>    about to display the next prompt). The advantage of not using ctrl+c is that it won't
+>    interfere with children who want to process ctrl+c (`cdb.exe`, for example), but on
+>    the other hand, it is less "aggressive".
+>
+> A metaphor with a club: the PSReadLine built-in feature patiently waits for the host of
+> a private party to leave before kicking the rest of the guests out; whereas the
+> ConsoleBouncer, upon receipt of a ctrl+c signal, just clears the whole place out right
+> away (which *might* not be the right thing to do, but you're paying them to be tough,
+> not smart).
+
+The way ConsoleBouncer works is that when it is loaded, it takes a look at which PIDs are
+currently attached to the console (there could be multiple, for example, if you launched
+PowerShell from cmd.exe), and remembers those PIDs as the "allowed PIDs".  Later, when a
+ctrl+c signal comes along, the ConsoleBouncer handler enumerates all PIDs attached to the
+console, and kills any which are not in the allow list (after a [configurable] grace
+period (default of 1 second)).
 
 Note that it only kills processes that are attached to the console, so if you launched
 some GUI processes after loading ConsoleBouncer (notepad, mspaint, etc.), they will
@@ -216,10 +248,8 @@ ConsoleBouncer is loaded in.
    Issue](https://github.com/dotnet/runtime/issues/88697) (a problem in the .NET Console
    API), if you are unlucky with timing, and PSReadLine happens to be calling e.g.
    `KeyAvailable` at just the same time as some straggler process is getting killed, it
-   might trigger the exception described by that GH Issue, and crash your shell. There are
-   two PSReadLine Issues filed for this: [this
-   one](https://github.com/PowerShell/PSReadLine/issues/3744) for a scoped fix to handle
-   the exception; and [this one](https://github.com/PowerShell/PSReadLine/issues/3745) to
-   propose a technically superior solution to the problem that ConsoleBouncer is solving,
-   implemented in PSReadLine itself.
- 
+   might trigger the exception described by that GH Issue, and crash your shell. The
+   relevant PSReadLine Issue for this is
+   [here](https://github.com/PowerShell/PSReadLine/issues/3744), and is fixed in
+   PSReadLine 2.3.3 and above (ships with PowerShell 7.4+).
+
